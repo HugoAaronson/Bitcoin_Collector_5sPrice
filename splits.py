@@ -12,26 +12,6 @@ NS = 1_000_000_000
 def frozen_holdout(df: pd.DataFrame, frac: float = 0.20,
                    time_col: str = "t_ns", horizon_s: float = 5.0,
                    embargo_s: float = 60.0, by: str = "rows"):
-    """Split off the final `frac` of the sample. Returns (develop, holdout).
-
-    `by="rows"`  — the final frac of SAMPLES (default).
-    `by="time"`  — the final frac of ELAPSED SPAN.
-
-    On a complete 1-second grid these coincide, because sample density is one
-    per second by construction. They diverge only where rows were dropped
-    (capture gaps, stale quotes). Rows is the default because it guarantees a
-    known number of evaluation samples: if the last 20% of the span happened to
-    contain an outage, a time-based cut would silently give a smaller and
-    noisier holdout. Both boundaries are printed so the choice is documentable
-    either way.
-
-    The gap between the two sets is purged and embargoed in TIME regardless of
-    `by` — that part is not a preference. A development label must fully
-    resolve, plus the longest feature window, before the holdout begins.
-
-    HARD RULE from the brief: do not look at, fit on, or evaluate against the
-    holdout until the model is final, then evaluate exactly once.
-    """
     d = df.sort_values(time_col, ignore_index=True)
     t = d[time_col].to_numpy(dtype="int64")
 
@@ -59,11 +39,6 @@ def purged_walk_forward(df: pd.DataFrame, n_splits: int = 5,
                         time_col: str = "t_ns", horizon_s: float = 5.0,
                         embargo_s: float = 60.0, expanding: bool = True):
     """Yield (train_idx, val_idx) for walk-forward CV with purge + embargo.
-
-    Walk-forward rather than K-fold because it is the only scheme where the
-    model is always trained on the past and tested on the future, which is the
-    situation it would actually face. K-fold on time series trains on data that
-    post-dates the validation set even when purged.
 
     `expanding=True` grows the training window each fold; False keeps it a
     fixed rolling length.
@@ -103,7 +78,7 @@ def purged_walk_forward(df: pd.DataFrame, n_splits: int = 5,
 
 
 def describe_splits(df: pd.DataFrame, n_splits: int = 5, **kw) -> pd.DataFrame:
-    """Table of fold sizes and boundary times — paste into the notebook."""
+    """Table of fold sizes and boundary times"""
     rows = []
     for i, (tr, va) in enumerate(purged_walk_forward(df, n_splits, **kw)):
         t = df.sort_values(kw.get("time_col", "t_ns"))[kw.get("time_col", "t_ns")].to_numpy()
@@ -120,12 +95,6 @@ def describe_splits(df: pd.DataFrame, n_splits: int = 5, **kw) -> pd.DataFrame:
 # ----------------------------------------------------------------- metrics
 
 def evaluate(y_true, y_pred, theta: float = 1.0) -> dict:
-    """The three metrics the brief requires, plus RMSE.
-
-    R2_ZERO uses a denominator about ZERO, not the sample mean: predicting "no
-    move" is the honest benchmark for a return, and a mean-based R2 flatters
-    any model that learns the sample drift. It can go negative — report it.
-    """
     y_true = np.asarray(y_true, dtype="float64")
     y_pred = np.asarray(y_pred, dtype="float64")
     sse = np.sum((y_true - y_pred) ** 2)
@@ -148,7 +117,6 @@ def evaluate(y_true, y_pred, theta: float = 1.0) -> dict:
 
 
 def theta_sensitivity(y_true, y_pred, thetas=(0.1, 0.25, 0.5, 1.0, 2.0, 5.0)) -> pd.DataFrame:
-    """Directional accuracy across thresholds — the brief asks for this curve."""
     y_true = np.asarray(y_true); y_pred = np.asarray(y_pred)
     rows = []
     for th in thetas:
