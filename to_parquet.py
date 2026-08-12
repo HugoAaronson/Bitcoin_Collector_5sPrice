@@ -19,7 +19,7 @@ has to care. Spot @bookTicker has no exchange timestamp at all: that column is
 null for those rows by design, not by bug. Use update_id for spot BBO ordering.
 """
 from __future__ import annotations
-
+ 
 import argparse
 import gzip
 import json
@@ -28,25 +28,25 @@ import zlib
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-
+ 
 import pyarrow as pa
 import pyarrow.parquet as pq
-
+ 
 log = logging.getLogger("to_parquet")
-
+ 
 # Exchange timestamp unit -> nanosecond multiplier, per connection.
 TS_MULT = {"spot": 1_000, "fut_public": 1_000_000, "fut_market": 1_000_000}
 VENUE = {"spot": "spot", "fut_public": "futures", "fut_market": "futures"}
-
+ 
 LEVEL = pa.list_(pa.struct([("px", pa.float64()), ("qty", pa.float64())]))
-
+ 
 COMMON = [
     ("recv_ns", pa.int64()),
     ("mono_ns", pa.int64()),
     ("sess", pa.string()),
     ("seq", pa.int64()),
 ]
-
+ 
 SCHEMAS = {
     "book_ticker": pa.schema(COMMON + [
         ("exch_event_ns", pa.int64()),   # null on spot
@@ -98,8 +98,8 @@ SCHEMAS = {
         ("filled_accum_qty", pa.float64()),
     ]),
 }
-
-
+ 
+ 
 def classify(stream: str) -> tuple[str, str]:
     """stream name -> (SYMBOL, kind)"""
     sym, _, rest = stream.partition("@")
@@ -115,20 +115,20 @@ def classify(stream: str) -> tuple[str, str]:
     if rest.startswith("forceOrder"):
         return sym, "force_order"
     return sym, "other"
-
-
+ 
+ 
 def _f(v):
     return float(v) if v is not None else None
-
-
+ 
+ 
 def _ns(v, mult):
     return int(v) * mult if v is not None else None
-
-
+ 
+ 
 def _levels(raw):
     return [{"px": float(p), "qty": float(q)} for p, q in (raw or [])]
-
-
+ 
+ 
 def normalise(kind: str, rec: dict, mult: int) -> dict | None:
     d = rec["d"]
     base = {
@@ -184,23 +184,23 @@ def normalise(kind: str, rec: dict, mult: int) -> dict | None:
             "filled_accum_qty": _f(o.get("z")),
         }
     return None
-
-
+ 
+ 
 def safe_lines(path: Path):
     """Yield lines, recovering across torn gzip members.
-
+ 
     These files are opened in append mode, so a restart adds a new gzip member
     to the same file. If an earlier run was killed uncleanly its member is torn
     (we want to make sure it doesn't stop here, silently skipping every GOOD member that
     was appended afterwards hiding most of an hour.)
-
+ 
     So: decompress member by member, salvage what we can from a torn one, then
     scan forward for the next valid member header and carry on.
     """
     data = path.read_bytes()
     n = len(data)
     pos, tail, torn = 0, b"", 0
-
+ 
     while pos < n:
         dec = zlib.decompressobj(31)          # 31 = gzip wrapper
         out, p, failed = [], pos, False
@@ -211,13 +211,13 @@ def safe_lines(path: Path):
                 failed = True
                 break
             p += 262144
-
+ 
         for blob in out:
             tail += blob
             *lines, tail = tail.split(b"\n")
             for ln in lines:
                 yield ln.decode("utf-8", "replace")
-
+ 
         if failed:
             torn += 1
             # Skip past this member and look for the next gzip magic.
@@ -226,18 +226,24 @@ def safe_lines(path: Path):
                 break
             pos, tail = nxt, b""
         else:
-            consumed = n - len(dec.unused_data)
+            # End of this member = (bytes fed) - (bytes left over from the last
+            # chunk). NOT n - len(unused_data): unused_data only reflects what
+            # was actually fed to the decompressor, and we stop feeding as soon
+            # as dec.eof goes true. Using n here overshoots to near the end of
+            # the file and silently skips every later member: which is every
+            # restart, since the writer appends.
+            consumed = p - len(dec.unused_data)
             if consumed <= pos:               # no forward progress; bail out
                 break
             pos = consumed
-
+ 
     if tail.strip():
         yield tail.decode("utf-8", "replace")
     if torn:
         log.warning("%s: %d torn gzip member(s) — recovered surrounding data",
                     path.name, torn)
-
-
+ 
+ 
 def convert_file(path: Path, root: Path, force: bool) -> int:
     conn = path.parent.parent.name.split("=", 1)[1]
     stamp = path.stem.replace(".jsonl", "").rsplit("-", 1)[1]  # YYYYMMDDTHH
@@ -245,7 +251,7 @@ def convert_file(path: Path, root: Path, force: bool) -> int:
     hour = stamp[9:11]
     mult = TS_MULT.get(conn, 1_000_000)
     venue = VENUE.get(conn, conn)
-
+ 
     buckets: dict[tuple[str, str], list[dict]] = defaultdict(list)
     bad = 0
     for line in safe_lines(path):
@@ -264,7 +270,7 @@ def convert_file(path: Path, root: Path, force: bool) -> int:
             bad += 1                                # after an unclean kill
     if bad:
         log.warning("%s: %d unparseable lines skipped", path.name, bad)
-
+ 
     written = 0
     for (sym, kind), rows in buckets.items():
         out_dir = (root / "curated" / f"venue={venue}" / f"symbol={sym}"
@@ -279,8 +285,8 @@ def convert_file(path: Path, root: Path, force: bool) -> int:
         written += len(rows)
         log.info("%s -> %d rows", out.relative_to(root), len(rows))
     return written
-
-
+ 
+ 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default="./data")
@@ -291,10 +297,10 @@ def main() -> None:
     args = ap.parse_args()
     logging.basicConfig(level=getattr(logging, args.log.upper()),
                         format="%(asctime)s %(levelname)s %(message)s")
-
+ 
     root = Path(args.root).expanduser()
     current = datetime.now(timezone.utc).strftime("%Y%m%dT%H")
-
+ 
     files = sorted((root / "raw").rglob("*.jsonl.gz"))
     total, failed = 0, []
     for f in files:
@@ -310,7 +316,7 @@ def main() -> None:
         log.error("%d file(s) could not be converted:", len(failed))
         for f in failed:
             log.error("   %s", f)
-
-
+ 
+ 
 if __name__ == "__main__":
     main()
