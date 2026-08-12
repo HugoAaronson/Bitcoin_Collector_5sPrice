@@ -140,12 +140,14 @@ def contiguous_blocks(df: pd.DataFrame, time_col: str = "recv_ns",
 
 
 def add_mid(df: pd.DataFrame) -> pd.DataFrame:
-    """Mid-price, spread, and a microprice weighted by opposing size."""
+    """Mid, spread, size-weighted mid, and queue imbalance."""
     df = df.copy()
     df["mid"] = (df.bid_px + df.ask_px) / 2
     df["spread"] = df.ask_px - df.bid_px
     tot = df.bid_qty + df.ask_qty
-    df["microprice"] = np.where(
+    # weighted toward the price on the side with LESS size, i.e. the side more
+    # likely to be consumed next
+    df["weighted_mid"] = np.where(
         tot > 0, (df.ask_px * df.bid_qty + df.bid_px * df.ask_qty) / tot, df["mid"])
     df["imbalance"] = np.where(tot > 0, (df.bid_qty - df.ask_qty) / tot, 0.0)
     return df
