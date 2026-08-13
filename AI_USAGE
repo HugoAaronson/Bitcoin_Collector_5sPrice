@@ -1,0 +1,11 @@
+Where I used it
+
+I used Claude Opus 5. Used for quick code construction for unfamiliar tasks, debugging, verifying outputs. Some advice taken on interacting features and initial feature families. Most of the pipeline modules were written and sometimes tested by Claude.
+
+Where I didn't
+
+Deciding what to cut, judging whether results were believable, and Feature exploration. Decisions on negative results (time-of-day, lags, LightGBM).
+
+Where it led me wrong
+
+E.g. Loading functions on hours ["20","21","22","23"]. Led to 4 hr blocks spanning 100 hrs spliced together. This resulted in spot–futures correlation of 0.98 at lag 0 for 1-second returns. This wasn't plausible so I went back over it. This showed a 20-hour gap in what should have been a continuous 4-hour window.
