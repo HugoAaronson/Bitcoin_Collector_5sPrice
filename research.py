@@ -192,6 +192,90 @@ def forward_price(df: pd.DataFrame, horizon_s: float = 5.0,
     out[f"fwd_bps_{horizon_s:g}s"] = (fwd / px - 1.0) * 1e4
     return out
 
+def grid_labels(bbo: pd.DataFrame, horizon_s: float = 5.0, freq_s: float = 1.0,
+                max_staleness_s: float = 2.0, price_col: str = "mid",
+                time_col: str = "recv_ns") -> pd.DataFrame:
+    """1-second clock-time grid with the forward log return, in basis points.
+
+        y(t) = 10_000 * ln( m(t + horizon_s) / m(t) )
+
+    Sampling is on recv_ns (local receive time) because a feature or label may
+    only use information available in real time at t.
+
+    Returns one row per surviving grid point:
+        t_ns, mid, mid_fwd, staleness_ns, sess, y_bps
+    """
+    df = bbo.sort_values(time_col, ignore_index=True)
+    ts = df[time_col].to_numpy(dtype="int64")
+    px = df[price_col].to_numpy(dtype="float64")
+    has_sess = "sess" in df.columns
+    sess = df["sess"].to_numpy() if has_sess else None
+
+    step = int(freq_s * NS)
+    h = int(round(horizon_s / freq_s))
+    if abs(h * freq_s - horizon_s) > 1e-9:
+        raise ValueError("horizon_s must be a whole multiple of freq_s")
+
+    # complete, evenly spaced grid — no missing points, so shifting by h steps
+    # is exactly horizon_s of clock time
+    t0 = (ts[0] // step + 1) * step
+    t1 = (ts[-1] // step) * step
+    grid = np.arange(t0, t1 + 1, step, dtype="int64")
+
+    # last observation at or before each grid point
+    idx = np.searchsorted(ts, grid, side="right") - 1
+    ok = idx >= 0
+    safe = np.where(ok, idx, 0)
+
+    staleness = grid - ts[safe]
+    ok &= staleness <= int(max_staleness_s * NS)
+
+    m = np.where(ok, px[safe], np.nan)
+
+    # forward endpoint: h grid steps ahead
+    m_fwd = np.full(len(grid), np.nan)
+    if h < len(grid):
+        m_fwd[:-h] = m[h:]
+
+    if has_sess:
+        s_here = np.where(ok, sess[safe], None)
+        s_fwd = np.full(len(grid), None, dtype=object)
+        if h < len(grid):
+            s_fwd[:-h] = s_here[h:]
+        same = np.array([a is not None and a == b
+                         for a, b in zip(s_here, s_fwd)])
+    else:
+        same = np.ones(len(grid), dtype=bool)
+
+    out = pd.DataFrame({
+        "t_ns": grid,
+        "mid": m,
+        "mid_fwd": np.where(same, m_fwd, np.nan),
+        "staleness_ns": np.where(ok, staleness, -1),
+        "sess": s_here if has_sess else None,
+    })
+    out["y_bps"] = 1e4 * np.log(out.mid_fwd / out.mid)
+    out["t"] = pd.to_datetime(out.t_ns, unit="ns", utc=True)
+    return out
+
+
+def grid_report(grid: pd.DataFrame, horizon_s: float = 5.0) -> None:
+    n = len(grid)
+    usable = grid.y_bps.notna().sum()
+    stale = (grid.staleness_ns < 0).sum()
+    tail = int(round(horizon_s))
+    print(f"grid points          : {n:,}")
+    print(f"  no prior obs / stale: {stale:,} ({stale/n:.2%})")
+    print(f"  dropped, incl. tail : {n - usable:,} ({(n-usable)/n:.2%})")
+    print(f"  usable labels       : {usable:,} ({usable/n:.2%})")
+    good = grid.dropna(subset=["y_bps"])
+    if len(good):
+        print(f"staleness of sampled quote: p50={good.staleness_ns.median()/1e6:.0f}ms "
+              f"p99={good.staleness_ns.quantile(.99)/1e6:.0f}ms")
+        print(f"y_bps: std={good.y_bps.std():.3f} "
+              f"min={good.y_bps.min():.2f} max={good.y_bps.max():.2f} "
+              f"|y|<0.1bps={100*(good.y_bps.abs()<0.1).mean():.1f}%")
+
 
 def to_datetime(df: pd.DataFrame, col: str = "recv_ns") -> pd.Series:
     return pd.to_datetime(df[col], unit="ns", utc=True)
