@@ -142,7 +142,7 @@ Most data loss was from known down-time (travel related)
 
 ## 6. Headline numbers
 
-Holdout, evaluated once: **R²_zero 0.079, IC 0.287, Spearman 0.425, Directional Accuracy 0.801** at threshhold `|y|>θ=1 bp` (n=5,231, 9.1% of sample), RMSE 0.673 bps. DA is flat 0.80–0.82 from θ=0.1 to θ=2.
+Holdout, evaluated once: **R²_zero 0.079, IC 0.287, Spearman 0.425, Directional Accuracy 0.801** at threshhold `|y|>θ=1 bp` (n=5,231, 9.1% of sample), RMSE 0.673 bps vs 0.701 bps for baseline always predicting zero. DA is flat 0.80–0.82 from θ=0.1 to θ=2.
 
 | theta_bps | n | pct_of_sample | dir_acc |
 |---|---|---|---|
